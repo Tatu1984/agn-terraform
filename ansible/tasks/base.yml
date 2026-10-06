@@ -1,0 +1,27 @@
+- name: Install Docker + compose + buildx
+  ansible.builtin.apt:
+    name: [docker.io, docker-compose-v2, docker-buildx]
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Docker running
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: true
+
+# 2 GB RAM is not enough for `next build`; swap keeps it from OOM-ing.
+- name: Create swapfile
+  ansible.builtin.shell: fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile
+  args:
+    creates: /swapfile
+
+- name: Swap in fstab
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    line: /swapfile none swap sw 0 0
+  register: fstab
+
+- name: Enable swap
+  ansible.builtin.command: swapon /swapfile
+  when: fstab.changed

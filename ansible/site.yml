@@ -1,0 +1,62 @@
+# Provision + deploy. Re-run to ship the latest `main`:  ansible-playbook site.yml --ask-vault-pass
+- name: Pigeon Pulse app server
+  hosts: app
+  become: true
+  tasks:
+    - ansible.builtin.import_tasks: tasks/base.yml
+
+    - name: App dir owned by ubuntu (git runs as ubuntu to use the forwarded ssh agent)
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+
+    - name: Checkout app
+      become: false
+      ansible.builtin.git:
+        repo: "{{ repo_url }}"
+        dest: "{{ app_dir }}"
+        version: "{{ repo_branch }}"
+        accept_newhostkey: true
+      register: checkout
+
+    - name: Write .env
+      ansible.builtin.template:
+        src: templates/env.j2
+        dest: "{{ app_dir }}/.env"
+        owner: ubuntu
+        mode: "0600"
+      register: env
+
+    # NEXT_PUBLIC_* are baked in at build time, so an .env change also needs a rebuild.
+    - name: Build + start
+      ansible.builtin.command: "docker compose up -d{{ ' --build' if (checkout.changed or env.changed) else '' }}"
+      args:
+        chdir: "{{ app_dir }}"
+      changed_when: checkout.changed or env.changed
+
+    - name: Wait for app (migrations run on boot)
+      ansible.builtin.command: >-
+        docker compose exec -T app node -e
+        "fetch('http://localhost:3000/api/ping').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      args:
+        chdir: "{{ app_dir }}"
+      register: ping
+      until: ping.rc == 0
+      retries: 30
+      delay: 5
+      changed_when: false
+
+    - name: Daily notify cron (replaces Vercel cron, 09:00 UTC)
+      ansible.builtin.cron:
+        name: notify-daily
+        hour: "9"
+        minute: "0"
+        job: >-
+          docker compose -f {{ app_dir }}/docker-compose.yml exec -T app node -e
+          "fetch('http://localhost:3000/api/cron/notify-daily', {headers: {authorization: 'Bearer ' + process.env.CRON_SECRET}}).then(r => process.exit(r.ok ? 0 : 1))"
+
+    - name: Prune old images
+      ansible.builtin.command: docker image prune -f
+      when: checkout.changed or env.changed

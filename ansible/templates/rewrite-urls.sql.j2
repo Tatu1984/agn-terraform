@@ -1,0 +1,16 @@
+-- Stored image/doc URLs are absolute: swap the R2 prefix for CloudFront in every text column.
+DO $$
+DECLARE
+  old_prefix text := '{{ r2_old_public_url }}';
+  new_prefix text := '{{ media_base_url }}';
+  r record; n int;
+BEGIN
+  FOR r IN SELECT table_name, column_name FROM information_schema.columns
+           WHERE table_schema = 'public' AND data_type IN ('text', 'character varying') LOOP
+    EXECUTE format('UPDATE public.%I SET %I = replace(%I, %L, %L) WHERE %I LIKE %L',
+      r.table_name, r.column_name, r.column_name, old_prefix, new_prefix,
+      r.column_name, '%' || old_prefix || '%');
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n > 0 THEN RAISE NOTICE '%.%: % rows', r.table_name, r.column_name, n; END IF;
+  END LOOP;
+END $$;

@@ -1,0 +1,10 @@
+# ":80" = plain HTTP on the Elastic IP until DNS is ready. Set to "pigeon-pulse.com"
+# once its A record points at the server; Caddy then fetches the HTTPS cert itself.
+domain: ":80"
+app_url: "{{ ('http://' ~ public_ip) if domain == ':80' else ('https://' ~ domain) }}"
+
+repo_url: git@github.com:infps/pigeon_pulse.git
+repo_branch: main
+app_dir: /opt/pigeon_pulse
+
+pg_client_version: "17" # >= both Neon and RDS major versions

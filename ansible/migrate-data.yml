@@ -1,0 +1,118 @@
+# ONE-TIME: Neon -> RDS, R2 -> S3, rewrite stored URLs. Run BEFORE the first site.yml.
+#   ansible-playbook migrate-data.yml --ask-vault-pass
+# Refuses to run if RDS already has tables; override with -e force_restore=true.
+- name: Migrate data from Neon + R2
+  hosts: app
+  become: true
+  vars:
+    pg_image: "postgres:{{ pg_client_version }}"
+    rds_env:
+      PGHOST: "{{ db_host }}"
+      PGUSER: "{{ db_user }}"
+      PGPASSWORD: "{{ db_password }}"
+      PGDATABASE: "{{ db_name }}"
+      PGSSLMODE: require
+    rds_docker_env: -e PGHOST -e PGUSER -e PGPASSWORD -e PGDATABASE -e PGSSLMODE
+    count_sql: >-
+      select table_name || '|' || (xpath('/row/c/text()', query_to_xml(format('select count(*) c from public.%I', table_name), false, true, '')))[1]::text
+      from information_schema.tables where table_schema = 'public' and table_type = 'BASE TABLE' order by 1
+  tasks:
+    - ansible.builtin.import_tasks: tasks/base.yml
+
+    - name: Count tables in RDS
+      ansible.builtin.command: >-
+        docker run --rm {{ rds_docker_env }} {{ pg_image }}
+        psql -tAc "select count(*) from information_schema.tables where table_schema = 'public'"
+      environment: "{{ rds_env }}"
+      register: rds_tables
+      changed_when: false
+
+    - name: Refuse to restore over existing data
+      ansible.builtin.fail:
+        msg: "RDS already has {{ rds_tables.stdout }} tables. Re-run with -e force_restore=true (pg_restore --clean) if intended."
+      when: rds_tables.stdout | int > 0 and not (force_restore | default(false) | bool)
+
+    - name: Stop app if already deployed (no writes during restore)
+      ansible.builtin.command: docker compose -f {{ app_dir }}/docker-compose.yml stop app
+      args:
+        removes: "{{ app_dir }}/docker-compose.yml"
+
+    - name: Dump Neon
+      ansible.builtin.command: >-
+        docker run --rm -e NEON_URL -v /opt:/w {{ pg_image }}
+        sh -c 'pg_dump "$NEON_URL" -Fc --no-owner --no-acl -f /w/neon.dump'
+      environment:
+        NEON_URL: "{{ neon_url }}"
+
+    - name: Restore into RDS
+      ansible.builtin.command: >-
+        docker run --rm {{ rds_docker_env }} -v /opt:/w {{ pg_image }}
+        pg_restore --no-owner --no-acl {{ '--clean --if-exists' if (force_restore | default(false) | bool) else '' }}
+        -d {{ db_name }} /w/neon.dump
+      environment: "{{ rds_env }}"
+      register: restore
+      # pg_restore exits 1 on harmless Neon-only objects (extensions/roles); inspect output instead.
+      failed_when: false
+
+    - name: Restore output (check for errors on TABLE DATA — those are real)
+      ansible.builtin.debug:
+        msg: "{{ restore.stderr_lines[-30:] }}"
+      when: restore.rc != 0
+
+    - name: Copy R2 -> S3
+      ansible.builtin.command: >-
+        docker run --rm
+        -e RCLONE_CONFIG_R2_TYPE=s3 -e RCLONE_CONFIG_R2_PROVIDER=Cloudflare
+        -e RCLONE_CONFIG_R2_ENDPOINT -e RCLONE_CONFIG_R2_ACCESS_KEY_ID -e RCLONE_CONFIG_R2_SECRET_ACCESS_KEY
+        -e RCLONE_CONFIG_S3_TYPE=s3 -e RCLONE_CONFIG_S3_PROVIDER=AWS
+        -e RCLONE_CONFIG_S3_ENV_AUTH=true -e RCLONE_CONFIG_S3_REGION={{ aws_region }}
+        rclone/rclone sync r2:{{ r2_bucket }} s3:{{ media_bucket }} --stats-one-line --stats 30s
+      environment:
+        RCLONE_CONFIG_R2_ENDPOINT: "{{ r2_endpoint }}"
+        RCLONE_CONFIG_R2_ACCESS_KEY_ID: "{{ r2_access_key_id }}"
+        RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: "{{ r2_secret_access_key }}"
+
+    - name: Render URL rewrite SQL
+      ansible.builtin.template:
+        src: templates/rewrite-urls.sql.j2
+        dest: /opt/rewrite-urls.sql
+        mode: "0644"
+
+    - name: Rewrite stored R2 URLs -> CloudFront
+      ansible.builtin.command: >-
+        docker run --rm {{ rds_docker_env }} -v /opt:/w {{ pg_image }}
+        psql -v ON_ERROR_STOP=1 -f /w/rewrite-urls.sql
+      environment: "{{ rds_env }}"
+      register: rewrite
+
+    - name: Rows rewritten
+      ansible.builtin.debug:
+        msg: "{{ rewrite.stderr_lines }}"
+
+    # Exact row count of every table on both sides. Re-run alone: --tags verify
+    - name: Row counts on RDS
+      ansible.builtin.command: >-
+        docker run --rm {{ rds_docker_env }} {{ pg_image }} psql -tAc "{{ count_sql }}"
+      environment: "{{ rds_env }}"
+      register: rds_counts
+      changed_when: false
+      tags: verify
+
+    - name: Row counts on Neon
+      ansible.builtin.command: >-
+        docker run --rm -e NEON_URL {{ pg_image }} sh -c 'psql "$NEON_URL" -tAc "$0"' "{{ count_sql }}"
+      environment:
+        NEON_URL: "{{ neon_url }}"
+      register: neon_counts
+      changed_when: false
+      tags: verify
+
+    - name: Tables whose counts differ (empty = identical)
+      ansible.builtin.debug:
+        msg:
+          tables: "{{ rds_counts.stdout_lines | length }}"
+          rows: "{{ rds_counts.stdout_lines | map('split', '|') | map('last') | map('int') | sum }}"
+          only_in_neon: "{{ neon_counts.stdout_lines | difference(rds_counts.stdout_lines) }}"
+          only_in_rds: "{{ rds_counts.stdout_lines | difference(neon_counts.stdout_lines) }}"
+      failed_when: neon_counts.stdout_lines | symmetric_difference(rds_counts.stdout_lines) | length > 0
+      tags: verify
