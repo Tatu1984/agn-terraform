@@ -29,12 +29,15 @@
         mode: "0600"
       register: env
 
-    # NEXT_PUBLIC_* are baked in at build time, so an .env change also needs a rebuild.
-    - name: Build + start
-      ansible.builtin.command: "docker compose up -d{{ ' --build' if (checkout.changed or env.changed) else '' }}"
+    # Image is built by GitHub Actions (pigeon_pulse/.github/workflows/docker-image.yml).
+    # Building here OOM-kills the running app on the 2 GB box. Compose recreates the
+    # container only when the image digest or .env changed.
+    - name: Pull image + start
+      ansible.builtin.command: docker compose up -d --pull always
       args:
         chdir: "{{ app_dir }}"
-      changed_when: checkout.changed or env.changed
+      register: up
+      changed_when: "'Recreate' in up.stderr or 'Creat' in up.stderr"
 
     - name: Wait for app (migrations run on boot)
       ansible.builtin.command: >-
@@ -59,4 +62,4 @@
 
     - name: Prune old images
       ansible.builtin.command: docker image prune -f
-      when: checkout.changed or env.changed
+      when: up.changed

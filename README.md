@@ -73,13 +73,15 @@ ansible-playbook site.yml --ask-vault-pass
 ### Going live on pigeon-pulse.com
 1. DNS: A record `pigeon-pulse.com` → `terraform output public_ip` (Cloudflare: grey cloud / DNS only).
 2. `ansible/group_vars/all/main.yml`: `domain: pigeon-pulse.com`.
-3. `ansible-playbook site.yml --ask-vault-pass` → rebuilds with HTTPS URLs; Caddy fetches the cert.
+3. Set `NEXT_PUBLIC_AUTH_BASE_URL=https://pigeon-pulse.com` in `pigeon_pulse/.github/workflows/docker-image.yml`, push, wait for the build, then `ansible-playbook site.yml --ask-vault-pass`; Caddy fetches the cert.
 4. PayPal webhook URL, mobile app API URL (`agn-mobile`: `eas.json`, `service/api.service.ts`, `app/(app)/liberation.tsx`), then retire Vercel.
 5. Keep Neon + R2 ~2 weeks for rollback, then delete; remove migration keys from `secrets.yml`.
 
 ### Deploying app updates
 ```bash
-cd ansible && ansible-playbook site.yml --ask-vault-pass   # pulls main, rebuilds only if changed
+# Push to main → GitHub Actions builds the image (~3 min) → then:
+cd ansible && ansible-playbook site.yml --ask-vault-pass   # pulls image, restarts only if changed
+# Roll back: add -e app_tag=<commit-sha>
 ```
 
 ## Notes

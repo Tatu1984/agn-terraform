@@ -6,5 +6,6 @@ app_url: "{{ ('http://' ~ public_ip) if domain == ':80' else ('https://' ~ domai
 repo_url: git@github.com:infps/pigeon_pulse.git
 repo_branch: main
 app_dir: /opt/pigeon_pulse
+app_tag: latest # or a commit sha to roll back: -e app_tag=<sha>
 
 pg_client_version: "17" # >= both Neon and RDS major versions
