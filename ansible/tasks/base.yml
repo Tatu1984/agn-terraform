@@ -4,10 +4,18 @@
     update_cache: true
     cache_valid_time: 3600
 
+# Default json-file logs grow forever; cap each container at 3 x 10 MB.
+- name: Docker log rotation
+  ansible.builtin.copy:
+    dest: /etc/docker/daemon.json
+    content: '{"log-driver": "json-file", "log-opts": {"max-size": "10m", "max-file": "3"}}'
+    mode: "0644"
+  register: daemon_json
+
 - name: Docker running
   ansible.builtin.service:
     name: docker
-    state: started
+    state: "{{ 'restarted' if daemon_json.changed else 'started' }}"
     enabled: true
 
 # 2 GB RAM is not enough for `next build`; swap keeps it from OOM-ing.
