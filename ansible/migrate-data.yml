@@ -29,7 +29,7 @@
 
     - name: Refuse to restore over existing data
       ansible.builtin.fail:
-        msg: "RDS already has {{ rds_tables.stdout }} tables. Re-run with -e force_restore=true (pg_restore --clean) if intended."
+        msg: "RDS already has {{ rds_tables.stdout }} tables. Re-run with -e force_restore=true (wipes RDS, then restores) if intended."
       when: rds_tables.stdout | int > 0 and not (force_restore | default(false) | bool)
 
     - name: Stop app if already deployed (no writes during restore)
@@ -44,11 +44,20 @@
       environment:
         NEON_URL: "{{ neon_url }}"
 
+    # Full wipe, not pg_restore --clean: --clean only drops objects present in the
+    # dump, so tables from newer app migrations would survive and make the app's
+    # `migrate deploy` fail with "already exists" on boot.
+    - name: Wipe RDS schema (force_restore only)
+      ansible.builtin.command: >-
+        docker run --rm {{ rds_docker_env }} {{ pg_image }}
+        psql -v ON_ERROR_STOP=1 -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+      environment: "{{ rds_env }}"
+      when: force_restore | default(false) | bool
+
     - name: Restore into RDS
       ansible.builtin.command: >-
         docker run --rm {{ rds_docker_env }} -v /opt:/w {{ pg_image }}
-        pg_restore --no-owner --no-acl {{ '--clean --if-exists' if (force_restore | default(false) | bool) else '' }}
-        -d {{ db_name }} /w/neon.dump
+        pg_restore --no-owner --no-acl -d {{ db_name }} /w/neon.dump
       environment: "{{ rds_env }}"
       register: restore
       # pg_restore exits 1 on harmless Neon-only objects (extensions/roles); inspect output instead.
