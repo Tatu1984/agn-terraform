@@ -20,10 +20,6 @@ variable "ssh_public_key_path" {
   default     = "~/.ssh/id_ed25519.pub"
 }
 
-variable "ssh_cidrs" {
-  description = "CIDRs allowed to SSH (your office/home IP as x.x.x.x/32)."
-  type        = list(string)
-}
 
 variable "instance_type" {
   type    = string

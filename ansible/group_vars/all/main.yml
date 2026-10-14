@@ -3,9 +3,14 @@
 domain: ":80"
 app_url: "{{ ('http://' ~ public_ip) if domain == ':80' else ('https://' ~ domain) }}"
 
-repo_url: git@github.com:infps/pigeon_pulse.git
+repo_url: https://github.com/infps/pigeon_pulse.git # public repo: no GitHub key needed on the box
 repo_branch: main
 app_dir: /opt/pigeon_pulse
 app_tag: latest # or a commit sha to roll back: -e app_tag=<sha>
 
 pg_client_version: "17" # >= both Neon and RDS major versions
+
+# Who can SSH (via SSM) as ubuntu. EXCLUSIVE: a key removed here is revoked on the
+# next site.yml run. Add a teammate = append their public key, run site.yml.
+team_ssh_keys:
+  - "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC241XfIfU/IO2M/Ky41yRYb5NQTlV1GeC68OVoGdhWLCaDVtFMOTFxPi3oNU1wPnU5qB2D8di3USh+BN4RXbK3WwqcmyOix2Kdpup/mk1EUGcV0IcKVwasz41tn5ALo7Znw0oqmInH60Fw3dVqmXNlawrgWfIfT9hc87j+5pikKJgCuQsvybb4SXr011OS4TDIgZ9HpdGPxktyoVVkGdkByVPipyHF2COvQs99tcfKeApRheNU74bSs34f1gvsTteYi8QhE0zMuM8u957X1H7lUGGjX2xbvmZ55ziKzAPexwn0bBI4z1YgE36sdt69o4Ly4ejI8/3XaRzTD4z8MsK/jYZClodFPKLrQnxyjv5trfn3jn9N/lEE0gIRyUqJjtSkvg0n6qHx8bDvmCewEfYCmKZ65rWxbq4Wbv83B0sl9xbqgaCxlNhmEOgkq0/aZq0t3vUfZsNTUmKJ6nlpJvYb7jGqJx3KrBYY4IaaHqBppW6DYDkqZbsf/KP77HpesyU= sounak"

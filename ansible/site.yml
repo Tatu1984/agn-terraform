@@ -5,12 +5,18 @@
   tasks:
     - ansible.builtin.import_tasks: tasks/base.yml
 
-    - name: App dir owned by ubuntu (git runs as ubuntu to use the forwarded ssh agent)
+    - name: App dir owned by ubuntu
       ansible.builtin.file:
         path: "{{ app_dir }}"
         state: directory
         owner: ubuntu
         group: ubuntu
+
+    - name: Team SSH keys (exclusive — removing a key revokes access)
+      ansible.posix.authorized_key:
+        user: ubuntu
+        key: "{{ team_ssh_keys | join('\n') }}"
+        exclusive: true
 
     - name: Checkout app
       become: false

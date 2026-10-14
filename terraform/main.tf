@@ -32,12 +32,7 @@ resource "aws_security_group" "web" {
     cidr_blocks      = ["0.0.0.0/0"]
     ipv6_cidr_blocks = ["::/0"]
   }
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = var.ssh_cidrs
-  }
+  # No port 22: SSH goes through SSM Session Manager (see ansible/ansible.cfg).
   egress {
     from_port        = 0
     to_port          = 0
@@ -188,9 +183,14 @@ resource "aws_iam_instance_profile" "app" {
 
 # --- EC2 ---------------------------------------------------------------------
 
+# Only used when the instance is first created; team access afterwards is managed
+# by Ansible (team_ssh_keys). ignore_changes so a teammate without this file can apply.
 resource "aws_key_pair" "deploy" {
   key_name   = "${var.name}-deploy"
-  public_key = file(pathexpand(var.ssh_public_key_path))
+  public_key = try(file(pathexpand(var.ssh_public_key_path)), "unused-after-create")
+  lifecycle {
+    ignore_changes = [public_key]
+  }
 }
 
 resource "aws_instance" "app" {
@@ -231,7 +231,7 @@ resource "local_file" "inventory" {
   file_permission = "0644"
   content         = <<-EOT
     [app]
-    ${aws_eip.app.public_ip} ansible_user=ubuntu
+    ${aws_instance.app.id} ansible_user=ubuntu
   EOT
 }
 

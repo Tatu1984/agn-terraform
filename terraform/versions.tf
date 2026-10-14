@@ -7,8 +7,15 @@ terraform {
     local  = { source = "hashicorp/local", version = "~> 2.5" }
   }
 
-  # ponytail: local state (gitignored, contains the DB password). Move to an S3
-  # backend with use_lockfile = true once more than one person runs apply.
+  # Shared state (bucket created by state.tf). Contains the DB password — the bucket
+  # is private and only pigeonpulse-deployers can read it. use_lockfile stops two
+  # people applying at once.
+  backend "s3" {
+    bucket       = "pigeonpulse-tfstate-066686950435"
+    key          = "pigeonpulse/terraform.tfstate"
+    region       = "us-west-2"
+    use_lockfile = true
+  }
 }
 
 provider "aws" {
